@@ -48,16 +48,46 @@ class OperatorPool:
         assert(len(self.spmat_ops) == self.n_ops)
         return
 
-    def get_string_for_term(self,op):
+#     def get_string_for_term(self,op):
 
+#         opstring = ""
+#         spins = ""
+#         for t in op.terms:
+
+
+#             opstring = "("
+#             for ti in t:
+#                 opstring += str(int(ti[0]/2))
+#                 if ti[1] == 0:
+#                     opstring += "  "
+#                 elif ti[1] == 1:
+#                     opstring += "' "
+#                 else:
+#                     print("wrong")
+#                     exit()
+#                 spins += str(ti[0]%2)
+
+# #            if self.fermi_ops[i].terms[t] > 0:
+# #                spins = "+"+spins
+# #            if self.fermi_ops[i].terms[t] < 0:
+# #                spins = "-"+spins
+#             opstring += ")"
+#             spins += " "
+#         opstring = " %18s : %s" %(opstring, spins)
+#         return opstring
+
+    def get_string_for_term(self,op, final=False): # Muqing: add parameter to print operator as a whole
+        if final:
+            return str(op).replace("\n", "")
+        if type(op) == QubitOperator: # Muqing
+            return str(op) # Muqing
         opstring = ""
         spins = ""
         for t in op.terms:
-
-
             opstring = "("
             for ti in t:
-                opstring += str(int(ti[0]/2))
+                opstring += str(int(ti[0])) # Muqing: show the original orbital index
+                # opstring += str(int(ti[0]/2))
                 if ti[1] == 0:
                     opstring += "  "
                 elif ti[1] == 1:
@@ -66,11 +96,6 @@ class OperatorPool:
                     print("wrong")
                     exit()
                 spins += str(ti[0]%2)
-
-#            if self.fermi_ops[i].terms[t] > 0:
-#                spins = "+"+spins
-#            if self.fermi_ops[i].terms[t] < 0:
-#                spins = "-"+spins
             opstring += ")"
             spins += " "
         opstring = " %18s : %s" %(opstring, spins)
