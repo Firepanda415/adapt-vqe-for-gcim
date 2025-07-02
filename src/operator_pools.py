@@ -1,9 +1,11 @@
 import openfermion
 import numpy as np
 import copy as cp
+import scipy.sparse.linalg as ssl # Muqing: for Pauli Excitation
 
 from openfermion import *
 
+print("This is a modified operator_pools.py by Muqing Zheng")
 
 class OperatorPool:
     def __init__(self):
@@ -44,7 +46,10 @@ class OperatorPool:
         self.spmat_ops = []
         print(" Generate Sparse Matrices for operators in pool")
         for op in self.fermi_ops:
-            self.spmat_ops.append(linalg.get_sparse_operator(op, n_qubits = self.n_spin_orb))
+            temp_sp = linalg.get_sparse_operator(op, n_qubits = self.n_spin_orb) # Muqing
+            if np.allclose(ssl.norm(temp_sp.imag), 0): # Muqing
+                temp_sp = temp_sp.real # Muqing
+            self.spmat_ops.append(temp_sp) # Muqing
         assert(len(self.spmat_ops) == self.n_ops)
         return
 
@@ -124,9 +129,8 @@ class OperatorPool:
 
         opstring = self.get_string_for_term(self.fermi_ops[i])
 
-        if abs(gi) > self.gradient_print_thresh:
+        if abs(gi) >= self.gradient_print_thresh:
             print(" %4i %12.8f %s" %(i, gi, opstring) )
-
         return gi
 
 
@@ -529,3 +533,312 @@ class singlet_SD(OperatorPool):
 def unrestricted_SD(n_occ_a, n_occ_b, n_vir_a, n_vir_b):
     print("NYI")
     exit()
+    
+    
+class UCCSD(OperatorPool):
+    def generate_SQ_Operators(self):
+        """
+        Generate UCCSD operators which include:
+        1. Singles: excitations from occupied to virtual orbitals
+        2. Doubles: paired excitations from occupied to virtual orbitals
+        
+        Assumes spin orbitals are labeled as 0a,0b,1a,1b,2a,2b,...
+        where a is alpha spin and b is beta spin.
+        """
+        print(" Form UCCSD excitation operators")
+        self.fermi_ops = []
+        
+        # Ensure equal number of alpha and beta occupied orbitals
+        assert(self.n_occ_a == self.n_occ_b)
+        n_occ = self.n_occ_a
+        n_vir_a = self.n_vir_a
+        n_vir_b = self.n_vir_b
+        
+        # Singles (alpha)
+        num_singles = 0
+        for i in range(n_occ):
+            ia = 2*i  # alpha spin orbital index
+            for a in range(n_vir_a):
+                aa = 2*n_occ + 2*a  # alpha virtual orbital index
+                
+                # Create excitation operator
+                term = FermionOperator(((aa, 1), (ia, 0)))
+                term -= hermitian_conjugated(term)
+                term = normal_ordered(term)
+                
+                # Normalize
+                coeff = 0
+                for t in term.terms:
+                    coeff_t = term.terms[t]
+                    coeff += coeff_t * coeff_t
+                
+                if term.many_body_order() > 0:
+                    term = term / np.sqrt(coeff)
+                    self.fermi_ops.append(term)
+                    num_singles += 1
+        
+        # Singles (beta)
+        for i in range(n_occ):
+            ib = 2*i + 1  # beta spin orbital index
+            for a in range(n_vir_b):
+                ab = 2*n_occ + 2*a + 1  # beta virtual orbital index
+                
+                # Create excitation operator
+                term = FermionOperator(((ab, 1), (ib, 0)))
+                term -= hermitian_conjugated(term)
+                term = normal_ordered(term)
+                
+                # Normalize
+                coeff = 0
+                for t in term.terms:
+                    coeff_t = term.terms[t]
+                    coeff += coeff_t * coeff_t
+                
+                if term.many_body_order() > 0:
+                    term = term / np.sqrt(coeff)
+                    self.fermi_ops.append(term)
+                    num_singles += 1
+        
+        # Doubles (alpha-alpha)
+        num_doubles = 0
+        for i in range(n_occ):
+            ia = 2*i  # alpha
+            for j in range(i, n_occ):
+                ja = 2*j  # alpha
+                for a in range(n_vir_a):
+                    aa = 2*n_occ + 2*a  # alpha
+                    for b in range(a, n_vir_a):
+                        ba = 2*n_occ + 2*b  # alpha
+                        
+                        # Skip diagonal terms for same indices
+                        if i == j and a == b:
+                            continue
+                            
+                        # Create excitation operator
+                        term = FermionOperator(((aa, 1), (ba, 1), (ja, 0), (ia, 0)))
+                        term -= hermitian_conjugated(term)
+                        term = normal_ordered(term)
+                        
+                        # Normalize
+                        coeff = 0
+                        for t in term.terms:
+                            coeff_t = term.terms[t]
+                            coeff += coeff_t * coeff_t
+                        
+                        if term.many_body_order() > 0:
+                            term = term / np.sqrt(coeff)
+                            self.fermi_ops.append(term)
+                            num_doubles += 1
+                        
+        
+        # Doubles (beta-beta)
+        for i in range(n_occ):
+            ib = 2*i + 1  # beta
+            for j in range(i, n_occ):
+                jb = 2*j + 1  # beta
+                for a in range(n_vir_b):
+                    ab = 2*n_occ + 2*a + 1  # beta
+                    for b in range(a, n_vir_b):
+                        bb = 2*n_occ + 2*b + 1  # beta
+                        
+                        # Skip diagonal terms for same indices
+                        if i == j and a == b:
+                            continue
+                            
+                        # Create excitation operator
+                        term = FermionOperator(((ab, 1), (bb, 1), (jb, 0), (ib, 0)))
+                        term -= hermitian_conjugated(term)
+                        term = normal_ordered(term)
+                        
+                        # Normalize
+                        coeff = 0
+                        for t in term.terms:
+                            coeff_t = term.terms[t]
+                            coeff += coeff_t * coeff_t
+                        
+                        if term.many_body_order() > 0:
+                            term = term / np.sqrt(coeff)
+                            self.fermi_ops.append(term)
+                            num_doubles += 1
+        
+        # Doubles (alpha-beta)
+        for i in range(n_occ):
+            ia = 2*i  # alpha
+            for j in range(n_occ):
+                jb = 2*j + 1  # beta
+                for a in range(n_vir_a):
+                    aa = 2*n_occ + 2*a  # alpha
+                    for b in range(n_vir_b):
+                        bb = 2*n_occ + 2*b + 1  # beta
+                        
+                        # Create excitation operator
+                        term = FermionOperator(((aa, 1), (bb, 1), (jb, 0), (ia, 0)))
+                        term -= hermitian_conjugated(term)
+                        term = normal_ordered(term)
+                        
+                        # Normalize
+                        coeff = 0
+                        for t in term.terms:
+                            coeff_t = term.terms[t]
+                            coeff += coeff_t * coeff_t
+                        
+                        if term.many_body_order() > 0:
+                            term = term / np.sqrt(coeff)
+                            self.fermi_ops.append(term)
+                            num_doubles += 1
+        
+        self.n_ops = len(self.fermi_ops)
+        print(f" Number of operators: {self.n_ops}, Number of Singles: {num_singles}, Number of Doubles: {num_doubles}")
+        return
+
+    
+    
+## Muqing: Implement pool for Qubit-ADAPT-VQE
+## Reference: https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/scripts/iter_vqe/qubit_adapt_vqe.py
+##            https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/src/ansatz_element_sets.py#L134
+import itertools
+class pauli_exc(OperatorPool):
+    def xyreplace(self, rstr):
+        temp_str = rstr.replace('Y', 'A')
+        X2Y_str = temp_str.replace('X', 'Y')
+        Y2X_str = X2Y_str.replace('A', 'X')
+        return Y2X_str
+    
+    def generate_SQ_Operators(self):
+        print(" Form Pauli excitation operators")
+        total_strs = []
+        self.fermi_ops = []
+        ### single_excitation_elements
+        ## SQExc(i, j).excitations_generators https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/src/ansatz_element_sets.py#L152
+        for i, j in itertools.combinations(range(self.n_spin_orb), 2):
+            termA  = (  0.5*QubitOperator('X{:d}'.format(i))+0.5j*QubitOperator('Y{:d}'.format(i))  )
+            termA *= (  0.5*QubitOperator('X{:d}'.format(j))-0.5j*QubitOperator('Y{:d}'.format(j))  )
+            termA -= hermitian_conjugated(termA)
+            
+            ## To individual Pauli string
+            for pt in termA.terms.keys():
+                temp_op = 1j*QubitOperator(pt)
+                if temp_op.action_strings.count('Y')%2 == 1:## Muqing: only include odd Y's
+                    if self.xyreplace( str(temp_op) ) not in total_strs:
+                        total_strs.append( str(temp_op) )
+                        self.fermi_ops.append( temp_op )
+                
+        ### Double excitations
+        ## DQExc([i, j], [k, l]).excitations_generators https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/src/ansatz_element_sets.py#L177
+        for i, j, k, l in itertools.combinations(range(self.n_spin_orb), 4):
+            termB = QubitOperator('')
+            for q1, q2 in zip([i,j], [k,l]):
+                termB *= (  0.5*QubitOperator('X{:d}'.format(q1))+0.5j*QubitOperator('Y{:d}'.format(q1))  )
+                termB *= (  0.5*QubitOperator('X{:d}'.format(q2))-0.5j*QubitOperator('Y{:d}'.format(q2))  )
+            termB -= hermitian_conjugated(termB)
+            
+            ## To individual Pauli string
+            for pt in termB.terms.keys():
+                temp_op = 1j*QubitOperator(pt)
+                if temp_op.action_strings.count('Y')%2 == 1:## Muqing: only include odd Y's
+                    if self.xyreplace( str(temp_op) ) not in total_strs:
+                        total_strs.append( str(temp_op) )
+                        self.fermi_ops.append( temp_op )
+
+        self.n_ops = len(self.fermi_ops)
+        print(" Number of operators: ", self.n_ops)
+        return
+# }}}
+    
+
+import numpy.random as nr
+class pauli_exc4(OperatorPool):
+    def xyreplace(self, rstr):
+        temp_str = rstr.replace('Y', 'A')
+        X2Y_str = temp_str.replace('X', 'Y')
+        Y2X_str = X2Y_str.replace('A', 'X')
+        return Y2X_str
+
+    def generate_SQ_Operators(self):
+        print(" Form Pauli excitation operators")
+        nr.seed(63199)
+
+        total_strs = []
+        self.fermi_ops = []
+        ### single_excitation_elements
+        ## SQExc(i, j).excitations_generators https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/src/ansatz_element_sets.py#L152
+        for i, j in itertools.combinations(range(self.n_spin_orb), 2):
+            termA  = (  0.5*QubitOperator('X{:d}'.format(i))+0.5j*QubitOperator('Y{:d}'.format(i))  )
+            termA *= (  0.5*QubitOperator('X{:d}'.format(j))-0.5j*QubitOperator('Y{:d}'.format(j))  )
+            termA -= hermitian_conjugated(termA)
+            
+            ## To individual Pauli string
+            for pt in termA.terms.keys():
+                temp_op = 1j*QubitOperator(pt)
+                if temp_op.action_strings.count('Y')%2 == 1:## Muqing: only include odd Y'
+                    if self.xyreplace( str(temp_op) ) not in total_strs:
+                        total_strs.append( str(temp_op) )
+                        if nr.random() < 0.25:
+                            self.fermi_ops.append( temp_op )
+                
+        ### Double excitations
+        ## DQExc([i, j], [k, l]).excitations_generators https://github.com/JordanovSJ/VQE/blob/78ff043c2487b379ba2d4d89af1347988ebccebd/src/ansatz_element_sets.py#L177
+        for i, j, k, l in itertools.combinations(range(self.n_spin_orb), 4):
+            termB = QubitOperator('')
+            for q1, q2 in zip([i,j], [k,l]):
+                termB *= (  0.5*QubitOperator('X{:d}'.format(q1))+0.5j*QubitOperator('Y{:d}'.format(q1))  )
+                termB *= (  0.5*QubitOperator('X{:d}'.format(q2))-0.5j*QubitOperator('Y{:d}'.format(q2))  )
+            termB -= hermitian_conjugated(termB)
+            
+            ## To individual Pauli string
+            for pt in termB.terms.keys():
+                temp_op = 1j*QubitOperator(pt)
+                if temp_op.action_strings.count('Y')%2 == 1:## Muqing: only include odd Y's
+                    if self.xyreplace( str(temp_op) ) not in total_strs:
+                        total_strs.append( str(temp_op) )
+                        if nr.random() < 0.25: #if nr.random() < 0.25:
+                            self.fermi_ops.append( temp_op )
+
+        self.n_ops = len(self.fermi_ops)
+        print(" Number of operators: ", self.n_ops)
+        return
+    
+
+
+    
+
+
+class pauli_excV(OperatorPool):
+    ## (2n-2)-size pool in Section B in https://arxiv.org/pdf/1911.10205.pdf
+    def op_gen_helper(self, cn, n_orbs, str_set):
+        if cn <= 1 or n_orbs<=1:
+            raise Exception('Must have at least 2 orbitals')
+        if cn > n_orbs: ## end the recurision
+            return str_set
+        if cn == 2:
+            return self.op_gen_helper(cn+1, n_orbs, str_set)
+        tmp_set = []
+        newZ = 'Z{:d}'.format(cn-1)
+        for kn in str_set:
+            tmp_set.append(newZ+' '+kn)
+        str_set = tmp_set + ['Y{:d}'.format(cn-1), 'Y{:d}'.format(cn-2)]
+        return self.op_gen_helper(cn+1, n_orbs, str_set)
+
+    def generate_SQ_Operators(self):
+        print(" Form reduced Pauli excitation operators V")
+        str_set = ['Z1 Y0', 'Y1']
+        opstr_set = self.op_gen_helper(2, self.n_spin_orb, str_set)
+        self.fermi_ops = [1j*QubitOperator(termA) for termA in opstr_set]
+        self.n_ops = len(self.fermi_ops)
+        print(" Number of operators: ", self.n_ops)
+        return
+    
+class pauli_excG(OperatorPool):
+    ## (2n-2)-size pool in Section B in https://arxiv.org/pdf/1911.10205.pdf
+    def generate_SQ_Operators(self):
+        print(" Form reduced Pauli excitation operators G")
+        opstr_set = []
+        for kk in range(self.n_spin_orb - 1):
+            str1 = 'Z{:d} Y{:d}'.format(kk, kk+1)
+            str2 = 'Y{:d}'.format(kk)
+            opstr_set.append(str1)
+            opstr_set.append(str2)
+        self.fermi_ops = [1j*QubitOperator(termA) for termA in opstr_set]
+        self.n_ops = len(self.fermi_ops)
+        print(" Number of operators: ", self.n_ops)
+        return
